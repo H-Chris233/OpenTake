@@ -139,8 +139,12 @@ impl TextureResolver for MediaResolver<'_> {
 
         let req = FrameRequest {
             time_secs,
+            // A wide seek tolerance makes ffmpeg decode far more than the target
+            // frame per call (the dominant per-frame CPU/RSS cost during scrub).
+            // 0.1s lands on a nearby keyframe with ~10x less waste; the streaming
+            // playback engine (#53) replaces this seek-per-frame path entirely.
             max_size: self.preview_box,
-            tolerance_secs: 1.0,
+            tolerance_secs: 0.1,
             apply_rotation: true,
         };
         let (_actual, frame) = decode_frame_at(&info.path, &req).ok()?;

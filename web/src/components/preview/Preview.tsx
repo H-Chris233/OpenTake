@@ -57,10 +57,16 @@ export function Preview() {
   // Timeline composite preview (#47): on the Timeline tab, paint the GPU-
   // composited frame for the current playhead (replacing the black placeholder).
   // `timeline` identity changes on every `timeline_changed`, forcing a refetch.
+  // The frame is clamped to the last DRAWABLE frame (total-1; clips are half-open
+  // [start,end)) so parking at the very end doesn't composite to black. During
+  // playback the request rate is capped (~11fps) to bound ffmpeg/PNG churn until
+  // the streaming engine (#53) lands; paused/scrub stays immediate.
+  const timelineTotal = totalFrames(timeline);
   const timelineFrameUrl = useTimelineFrame(
-    activeFrame,
+    Math.min(Math.round(activeFrame), Math.max(0, timelineTotal - 1)),
     !previewing && timeline.tracks.length > 0,
     timeline,
+    isPlaying ? 90 : 0,
   );
   const fps = timeline.fps;
   const total = previewing
@@ -105,7 +111,9 @@ export function Preview() {
         h = ch;
         w = ch * aspect;
       }
-      setFit({ w: w * canvasZoom, h: h * canvasZoom });
+      // Round to whole pixels so the canvas box never renders a sub-pixel torn
+      // edge (the "preview looks missing/glitchy" report).
+      setFit({ w: Math.round(w * canvasZoom), h: Math.round(h * canvasZoom) });
     };
     update();
     const ro = new ResizeObserver(update);
@@ -137,7 +145,12 @@ export function Preview() {
             width: fit.w,
             height: fit.h,
             background: "var(--bg-preview-canvas)",
-            border: canvasZoom < 1 ? "1px solid rgba(255,255,255,0.25)" : "none",
+            // Always outline the canvas surface so the preview area is visibly
+            // present even when the composite is black (empty/end frame).
+            border:
+              canvasZoom < 1
+                ? "1px solid rgba(255,255,255,0.25)"
+                : "1px solid rgba(255,255,255,0.08)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
