@@ -30,8 +30,12 @@ export function usePlaybackTicker() {
       if (lastTsRef.current !== null) {
         const dtSec = (ts - lastTsRef.current) / 1000;
         const next = ui.activeFrame + dtSec * fps;
-        if (next >= total) {
-          ui.setCurrentFrame(total);
+        // Clips are half-open [start, end): the last DRAWABLE frame is total-1.
+        // Stopping at total over-shoots one frame past all content and the
+        // composite goes black, so clamp the end to total-1.
+        const last = Math.max(0, total - 1);
+        if (next >= last) {
+          ui.setCurrentFrame(last);
           ui.setPlaying(false);
           lastTsRef.current = null;
           return;
