@@ -7,17 +7,58 @@
  */
 
 import * as api from "../lib/api";
-import { isTauri } from "../lib/api";
 import { forceRefresh } from "./sync";
 import { useEditorUiStore } from "./uiStore";
 import { useProjectStore } from "./projectStore";
 import { useRecentStore } from "./recentStore";
-import { openDialog } from "../lib/dialog";
+import { openDialog, saveDialog } from "../lib/dialog";
+import { t } from "../i18n";
 
-/** New, unsaved project, then enter the editor. */
+const PROJECT_EXT = "opentake";
+
+/** Ensure a chosen path carries the `.opentake` bundle extension. */
+function withExt(path: string): string {
+  return path.endsWith(`.${PROJECT_EXT}`) ? path : `${path}.${PROJECT_EXT}`;
+}
+
+/**
+ * New project. Mirrors upstream `AppState.createNewProject` (`NSSavePanel`):
+ * prompt for a save location + name (default `~/Documents/OpenTake`), then
+ * create the session and **immediately write the `.opentake` bundle to disk** so
+ * the project has a real location (the user's complaint was "new project can't
+ * choose where it saves"). Records it in recents and enters the editor.
+ *
+ * Outside Tauri (browser shell) there is no save panel — fall back to a fresh
+ * in-memory session so the UI is still explorable.
+ */
 export async function newProjectAndEnter(): Promise<void> {
+  const save = await saveDialog();
+  if (!save) {
+    await api.projectNew();
+    await forceRefresh();
+    useEditorUiStore.getState().setView("editor");
+    return;
+  }
+
+  const defaultDir = await api.getDefaultProjectDir().catch(() => "");
+  const sep = defaultDir && !defaultDir.endsWith("/") ? "/" : "";
+  const defaultPath = defaultDir
+    ? `${defaultDir}${sep}${t("home.untitled")}.${PROJECT_EXT}`
+    : undefined;
+
+  const chosen = await save({
+    title: t("home.newProject"),
+    defaultPath,
+    filters: [{ name: "OpenTake", extensions: [PROJECT_EXT] }],
+  });
+  if (typeof chosen !== "string") return; // cancelled
+
+  const path = withExt(chosen);
   await api.projectNew();
-  if (!isTauri) await forceRefresh();
+  await api.projectSave(path);
+  useProjectStore.getState().setProjectPath(path);
+  useRecentStore.getState().add(path);
+  await forceRefresh();
   useEditorUiStore.getState().setView("editor");
 }
 

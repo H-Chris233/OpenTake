@@ -8,18 +8,41 @@
 
 mod commands;
 mod media;
+mod secret;
 
 use opentake_core::{AppCore, CoreEvent};
 use opentake_media::MediaEngine;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 use crate::media::MediaState;
 
 /// Build and run the Tauri application. The `main.rs` binary calls this.
+///
+/// Lifecycle mirrors upstream's "the app stays resident; closing the window
+/// returns to Home" (AppDelegate). Tauri's default — quit when the last window
+/// closes — is overridden: [`WindowEvent::CloseRequested`] is intercepted to
+/// **hide** the window and tell the front end to return Home, so the process
+/// keeps running in the background. Dock-reopen ([`RunEvent::Reopen`]) shows it
+/// again. `Cmd+Q` still exits (it raises `ExitRequested`, not prevented here).
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Background-run: don't quit, hide and return to Home.
+                api.prevent_close();
+                let _ = window.hide();
+                let _ = window.app_handle().emit("go_home", ());
+            }
+        })
         .setup(|app| {
+            // Keep a Dock icon + normal app behavior while the window is hidden,
+            // so the user can reopen from the Dock (upstream: NSApp .regular).
+            #[cfg(target_os = "macos")]
+            let _ = app
+                .handle()
+                .set_activation_policy(tauri::ActivationPolicy::Regular);
+
             // The one authoritative editing session, shared with every command.
             let core = AppCore::new();
 
@@ -60,12 +83,31 @@ pub fn run() {
             commands::project_new,
             commands::project_open,
             commands::project_save,
+            commands::get_default_project_dir,
             media::import_folder,
             media::import_media,
             media::get_media,
+            secret::secret_save,
+            secret::secret_load,
+            secret::secret_delete,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Dock-reopen with no visible window (we hide on close) shows it again.
+            if let RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
+                if !has_visible_windows {
+                    if let Some(win) = app.get_webview_window("main") {
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                }
+            }
+        });
 }
 
 /// Map a [`CoreEvent`] onto a front-end Tauri event. The event name matches the

@@ -12,6 +12,7 @@ import type {
   EditRequest,
   EditResult,
   MediaList,
+  SecretStatus,
   TimelineSnapshot,
 } from "./types";
 
@@ -96,6 +97,14 @@ export async function projectSave(path: string | null): Promise<string> {
   return path ?? "";
 }
 
+/** The default folder new projects save into (`~/Documents/OpenTake`). Empty
+ *  string outside Tauri (where the save dialog is unavailable anyway). */
+export async function getDefaultProjectDir(): Promise<string> {
+  await ensureTauri();
+  if (invokeImpl) return invokeImpl<string>("get_default_project_dir");
+  return "";
+}
+
 // MARK: - Media commands
 //
 // `import_folder` scans a directory for white-listed media and imports each;
@@ -122,6 +131,37 @@ export async function getMedia(): Promise<MediaList> {
   await ensureTauri();
   if (invokeImpl) return invokeImpl<MediaList>("get_media");
   return { items: [] };
+}
+
+// MARK: - BYOK secret store
+//
+// API keys are stored in the OS keychain by the Rust backend (`secret_*`
+// commands wrapping `opentake-gen`'s `KeyringStore`). The plaintext key is sent
+// only on save; every command returns a masked `SecretStatus`, so the key never
+// lives in JS memory or localStorage. Outside Tauri there is no keychain, so the
+// fallback reports "no key" — the form renders but cannot persist.
+
+const NO_SECRET: SecretStatus = { hasKey: false, masked: "" };
+
+export async function secretSave(
+  provider: string,
+  key: string,
+): Promise<SecretStatus> {
+  await ensureTauri();
+  if (invokeImpl) return invokeImpl<SecretStatus>("secret_save", { provider, key });
+  return NO_SECRET;
+}
+
+export async function secretLoad(provider: string): Promise<SecretStatus> {
+  await ensureTauri();
+  if (invokeImpl) return invokeImpl<SecretStatus>("secret_load", { provider });
+  return NO_SECRET;
+}
+
+export async function secretDelete(provider: string): Promise<SecretStatus> {
+  await ensureTauri();
+  if (invokeImpl) return invokeImpl<SecretStatus>("secret_delete", { provider });
+  return NO_SECRET;
 }
 
 // MARK: - Events
@@ -157,6 +197,16 @@ export async function onMediaChanged(handler: () => void): Promise<() => void> {
   await ensureTauri();
   if (!listenImpl) return () => {};
   return listenImpl("media_changed", () => handler());
+}
+
+/** Subscribe to `go_home` (emitted when the window is closed/hidden so the app
+ *  keeps running in the background — the front end returns to the launcher so a
+ *  Dock-reopen shows Home, mirroring upstream "close window → Home"). No-op
+ *  outside Tauri. */
+export async function onGoHome(handler: () => void): Promise<() => void> {
+  await ensureTauri();
+  if (!listenImpl) return () => {};
+  return listenImpl("go_home", () => handler());
 }
 
 // MARK: - Browser fallback (mirror, not authoritative)

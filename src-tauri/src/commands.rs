@@ -10,7 +10,7 @@
 //! [`EditRequest`] that maps 1:1 onto the variants the front end issues in v1.
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use opentake_core::dto::{
     handle_edit_apply, handle_get_timeline, handle_project_new, handle_project_open,
@@ -61,6 +61,22 @@ pub fn project_open(core: State<'_, AppCore>, path: String) -> Result<TimelineSn
 #[tauri::command]
 pub fn project_save(core: State<'_, AppCore>, path: Option<String>) -> Result<String, String> {
     handle_project_save(&core, path).map_err(msg)
+}
+
+/// `get_default_project_dir`: the default folder new projects save into
+/// (`~/Documents/OpenTake`, created on first use). Mirrors upstream
+/// `Project.storageDirectory` (`~/Documents/Palmier Pro`). The front end uses it
+/// as the save dialog's `defaultPath` so the user picks a location + name like
+/// upstream `createNewProject` (`NSSavePanel`).
+#[tauri::command]
+pub fn get_default_project_dir(app: AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| e.to_string())?
+        .join("OpenTake");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 /// `can_undo` / `can_redo`: enable/disable the toolbar affordances.

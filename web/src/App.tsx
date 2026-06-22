@@ -10,6 +10,7 @@ import { startMediaSync } from "./store/mediaStore";
 import { useEditorUiStore } from "./store/uiStore";
 import { initI18n } from "./i18n";
 import { initTheme } from "./store/settingsStore";
+import { onGoHome } from "./lib/api";
 
 export default function App() {
   // Editor-only hooks are safe to keep mounted across views: they only act on
@@ -26,6 +27,13 @@ export default function App() {
     initTheme();
     void startSync();
     void startMediaSync();
+    // Window closed → app stays resident; return to the launcher (so a
+    // Dock-reopen shows Home), mirroring upstream "close window → Home".
+    let unlisten: (() => void) | undefined;
+    void onGoHome(() => useEditorUiStore.getState().setView("home")).then((un) => {
+      unlisten = un;
+    });
+    return () => unlisten?.();
   }, []);
 
   if (view === "home") return <HomeView />;
