@@ -43,6 +43,7 @@ export function HomeView() {
         }}
       >
         <header
+          data-tauri-drag-region
           style={{
             padding: "var(--space-xxl) var(--space-xl-xxl) var(--space-xl)",
           }}
@@ -108,7 +109,7 @@ function Sidebar() {
         flex: "0 0 auto",
         display: "flex",
         flexDirection: "column",
-        padding: "var(--space-xl) var(--space-md)",
+        padding: "var(--titlebar-safe-top) var(--space-md) var(--space-xl)",
         background: "var(--bg-raised)",
         borderRight: "var(--bw-thin) solid var(--border-primary)",
       }}

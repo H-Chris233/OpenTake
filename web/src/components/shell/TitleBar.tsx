@@ -32,7 +32,7 @@ export function TitleBar() {
         display: "flex",
         alignItems: "center",
         gap: "var(--space-sm)",
-        padding: "0 var(--space-md)",
+        padding: "0 var(--space-md) 0 var(--titlebar-safe-left)",
         background: "var(--bg-base)",
         borderBottom: "var(--bw-thin) solid var(--border-primary)",
       }}

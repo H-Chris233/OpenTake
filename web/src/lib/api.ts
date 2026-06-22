@@ -97,6 +97,14 @@ export async function projectSave(path: string | null): Promise<string> {
   return path ?? "";
 }
 
+/** The default folder new projects save into (`~/Documents/OpenTake`). Empty
+ *  string outside Tauri (where the save dialog is unavailable anyway). */
+export async function getDefaultProjectDir(): Promise<string> {
+  await ensureTauri();
+  if (invokeImpl) return invokeImpl<string>("get_default_project_dir");
+  return "";
+}
+
 // MARK: - Media commands
 //
 // `import_folder` scans a directory for white-listed media and imports each;
@@ -189,6 +197,16 @@ export async function onMediaChanged(handler: () => void): Promise<() => void> {
   await ensureTauri();
   if (!listenImpl) return () => {};
   return listenImpl("media_changed", () => handler());
+}
+
+/** Subscribe to `go_home` (emitted when the window is closed/hidden so the app
+ *  keeps running in the background — the front end returns to the launcher so a
+ *  Dock-reopen shows Home, mirroring upstream "close window → Home"). No-op
+ *  outside Tauri. */
+export async function onGoHome(handler: () => void): Promise<() => void> {
+  await ensureTauri();
+  if (!listenImpl) return () => {};
+  return listenImpl("go_home", () => handler());
 }
 
 // MARK: - Browser fallback (mirror, not authoritative)
