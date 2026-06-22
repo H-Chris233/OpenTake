@@ -5,7 +5,7 @@
  * background + a centered placeholder. Transport drives the local playhead.
  */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   SkipBack,
   SkipForward,
@@ -39,8 +39,47 @@ export function Preview() {
     previewMediaId ? s.items.find((m) => m.id === previewMediaId) ?? null : null,
   );
 
-  const total = totalFrames(timeline);
+  // Media-preview playback is driven by the app transport (more capable than the
+  // <video>'s native controls), so the <video>/<audio> renders WITHOUT controls
+  // and this ref + state mirror its time/duration into the shared transport.
+  const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const [mediaTime, setMediaTime] = useState(0);
+  const [mediaDuration, setMediaDuration] = useState(0);
+  const [mediaPlaying, setMediaPlaying] = useState(false);
+  useEffect(() => {
+    setMediaTime(0);
+    setMediaDuration(0);
+    setMediaPlaying(false);
+  }, [previewMediaId]);
+
+  const previewing = previewItem !== null;
+  const fps = timeline.fps;
+  const total = previewing
+    ? Math.max(0, Math.round(mediaDuration * fps))
+    : totalFrames(timeline);
+  const activeShownFrame = previewing ? Math.round(mediaTime * fps) : activeFrame;
+  const playing = previewing ? mediaPlaying : isPlaying;
   const aspect = timeline.width / timeline.height;
+
+  const seekTo = (frame: number) => {
+    const clamped = Math.max(0, Math.min(total, frame));
+    if (previewing) {
+      if (mediaRef.current) mediaRef.current.currentTime = clamped / fps;
+    } else {
+      setCurrentFrame(clamped);
+    }
+  };
+
+  const togglePlay = () => {
+    if (previewing) {
+      const el = mediaRef.current;
+      if (!el) return;
+      if (el.paused) void el.play();
+      else el.pause();
+    } else {
+      setPlaying(!isPlaying);
+    }
+  };
 
   const stageRef = useRef<HTMLDivElement>(null);
   const [fit, setFit] = useState({ w: 0, h: 0 });
@@ -64,8 +103,6 @@ export function Preview() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [aspect, canvasZoom]);
-
-  const seek = (frame: number) => setCurrentFrame(Math.max(0, Math.min(total, frame)));
 
   return (
     <>
@@ -101,7 +138,13 @@ export function Preview() {
           }}
         >
           {previewItem ? (
-            <MediaPreview item={previewItem} />
+            <MediaPreview
+              item={previewItem}
+              mediaRef={mediaRef}
+              onTime={setMediaTime}
+              onDuration={setMediaDuration}
+              onPlayingChange={setMediaPlaying}
+            />
           ) : (
             // Rust composite frame target (timeline preview — wired in a later batch).
             <span>{timeline.tracks.length === 0 ? t("preview.noMedia") : `${timeline.width}×${timeline.height}`}</span>
@@ -109,8 +152,10 @@ export function Preview() {
         </div>
       </div>
 
-      {/* Scrub bar */}
-      <ScrubBar frame={activeFrame} total={total} onSeek={seek} />
+      {/* The app's scrub + transport are the single control surface — they drive
+          both the timeline composite and (via mediaRef) single-media preview, so
+          the <video>/<audio> renders without its native controls. */}
+      <ScrubBar frame={activeShownFrame} total={total} onSeek={seekTo} />
 
       {/* Transport bar */}
       <div
@@ -126,23 +171,23 @@ export function Preview() {
         }}
       >
         <span className="tabular" style={{ fontSize: "var(--fs-xs)", color: "var(--accent-timecode)" }}>
-          {formatTimecode(activeFrame, timeline.fps)} / {formatTimecode(total, timeline.fps)}
+          {formatTimecode(activeShownFrame, fps)} / {formatTimecode(total, fps)}
         </span>
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-md)" }}>
-          <HoverButton title={t("preview.jumpStart")} onClick={() => seek(0)}>
+          <HoverButton title={t("preview.jumpStart")} onClick={() => seekTo(0)}>
             <Icon icon={SkipBack} size={13} />
           </HoverButton>
-          <HoverButton title={t("preview.stepBack")} onClick={() => seek(activeFrame - 1)}>
+          <HoverButton title={t("preview.stepBack")} onClick={() => seekTo(activeShownFrame - 1)}>
             <Icon icon={StepBack} size={13} />
           </HoverButton>
-          <HoverButton title={t("preview.playPause")} onClick={() => setPlaying(!isPlaying)}>
-            <Icon icon={isPlaying ? Pause : Play} size={14} />
+          <HoverButton title={t("preview.playPause")} onClick={togglePlay}>
+            <Icon icon={playing ? Pause : Play} size={14} />
           </HoverButton>
-          <HoverButton title={t("preview.stepForward")} onClick={() => seek(activeFrame + 1)}>
+          <HoverButton title={t("preview.stepForward")} onClick={() => seekTo(activeShownFrame + 1)}>
             <Icon icon={StepForward} size={13} />
           </HoverButton>
-          <HoverButton title={t("preview.jumpEnd")} onClick={() => seek(total)}>
+          <HoverButton title={t("preview.jumpEnd")} onClick={() => seekTo(total)}>
             <Icon icon={SkipForward} size={13} />
           </HoverButton>
         </div>
@@ -157,10 +202,22 @@ export function Preview() {
 }
 
 /** Renders a single media asset straight from disk via the asset protocol —
- *  `<video>`/`<audio>` with native controls, `<img>` for stills. The pragmatic
- *  preview path (WebView decodes the original file); timeline composite preview
- *  is a later batch. */
-function MediaPreview({ item }: { item: MediaItem }) {
+ *  `<video>`/`<audio>` (NO native controls; the app transport drives them via
+ *  `mediaRef`), `<img>` for stills. The pragmatic preview path (WebView decodes
+ *  the original file); timeline composite preview is a later batch. */
+function MediaPreview({
+  item,
+  mediaRef,
+  onTime,
+  onDuration,
+  onPlayingChange,
+}: {
+  item: MediaItem;
+  mediaRef: React.MutableRefObject<HTMLMediaElement | null>;
+  onTime: (time: number) => void;
+  onDuration: (duration: number) => void;
+  onPlayingChange: (playing: boolean) => void;
+}) {
   const t = useT();
   const url = assetUrl(item.path);
   const box: React.CSSProperties = { width: "100%", height: "100%", objectFit: "contain" };
@@ -169,18 +226,45 @@ function MediaPreview({ item }: { item: MediaItem }) {
     return <span>{t("preview.unavailable")}</span>;
   }
   if (item.type === "image") {
-    return <img src={url} alt={item.name} style={box} />;
+    return <img src={url} alt={item.name} draggable={false} style={box} />;
   }
   if (item.type === "audio") {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-md)", padding: "var(--space-xl)" }}>
         <Icon icon={Play} size={28} />
-        <audio src={url} controls style={{ width: "80%" }} />
+        <audio
+          ref={(el) => {
+            mediaRef.current = el;
+          }}
+          src={url}
+          onTimeUpdate={(e) => onTime(e.currentTarget.currentTime)}
+          onLoadedMetadata={(e) => onDuration(e.currentTarget.duration || 0)}
+          onDurationChange={(e) => onDuration(e.currentTarget.duration || 0)}
+          onPlay={() => onPlayingChange(true)}
+          onPause={() => onPlayingChange(false)}
+          onEnded={() => onPlayingChange(false)}
+          style={{ width: "80%" }}
+        />
       </div>
     );
   }
-  // video (and any other visual): native player.
-  return <video src={url} controls style={box} />;
+  // video (and any other visual): app transport drives it (no native controls).
+  return (
+    <video
+      ref={(el) => {
+        mediaRef.current = el;
+      }}
+      src={url}
+      playsInline
+      onTimeUpdate={(e) => onTime(e.currentTarget.currentTime)}
+      onLoadedMetadata={(e) => onDuration(e.currentTarget.duration || 0)}
+      onDurationChange={(e) => onDuration(e.currentTarget.duration || 0)}
+      onPlay={() => onPlayingChange(true)}
+      onPause={() => onPlayingChange(false)}
+      onEnded={() => onPlayingChange(false)}
+      style={box}
+    />
+  );
 }
 
 function PreviewTabs({ item }: { item: MediaItem | null }) {

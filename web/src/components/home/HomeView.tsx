@@ -185,7 +185,9 @@ function ProjectGrid() {
       style={{
         flex: 1,
         overflowY: "auto",
-        padding: "0 var(--space-xl-xxl) var(--space-xl-xxl)",
+        // Top padding gives the hover scale-up room so first-row cards aren't
+        // clipped by the scroll viewport's top edge.
+        padding: "var(--space-md) var(--space-xl-xxl) var(--space-xl-xxl)",
       }}
     >
       <div
@@ -229,6 +231,8 @@ function NewProjectCard({ onClick }: { onClick: () => void }) {
         display: "block",
         width: "100%",
         textAlign: "left",
+        position: "relative",
+        zIndex: hovered ? 2 : 1,
         transform: hovered ? "scale(1.02)" : "scale(1)",
         transition: "transform var(--anim-transition) var(--ease-out)",
       }}
@@ -274,6 +278,7 @@ function ProjectCard({ entry }: { entry: RecentProject }) {
       onMouseLeave={() => setHovered(false)}
       style={{
         position: "relative",
+        zIndex: hovered ? 2 : 1,
         transform: hovered ? "scale(1.02)" : "scale(1)",
         transition: "transform var(--anim-transition) var(--ease-out)",
       }}

@@ -33,7 +33,23 @@ export default function App() {
     void onGoHome(() => useEditorUiStore.getState().setView("home")).then((un) => {
       unlisten = un;
     });
-    return () => unlisten?.();
+    // Suppress the WebView's native context menu (the stray "Reload" item) so
+    // app-native menus can own right-click; allow it in text fields.
+    const onContextMenu = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      unlisten?.();
+      document.removeEventListener("contextmenu", onContextMenu);
+    };
   }, []);
 
   if (view === "home") return <HomeView />;
