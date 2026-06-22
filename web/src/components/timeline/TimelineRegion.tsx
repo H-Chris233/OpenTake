@@ -14,12 +14,14 @@ import { Toolbar } from "../toolbar/Toolbar";
 import { TimelineContainer } from "./TimelineContainer";
 import { MEDIA_DND_TYPE } from "../media/MediaPanel";
 import { useMediaStore } from "../../store/mediaStore";
+import { useEditorUiStore } from "../../store/uiStore";
 import { addMediaToTimeline } from "../../store/editActions";
 import { useT } from "../../i18n";
 
 export function TimelineRegion() {
   const t = useT();
   const [dragOver, setDragOver] = useState(false);
+  const setPreviewMedia = useEditorUiStore((s) => s.setPreviewMedia);
 
   const hasMediaPayload = (e: React.DragEvent) =>
     e.dataTransfer.types.includes(MEDIA_DND_TYPE);
@@ -51,6 +53,9 @@ export function TimelineRegion() {
       <Toolbar />
       <div
         style={{ position: "relative", flex: 1, minHeight: 0 }}
+        // Focusing the editing area returns the preview to the Timeline tab
+        // (so the composite — not the last-clicked media — is shown).
+        onPointerDownCapture={() => setPreviewMedia(null)}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
