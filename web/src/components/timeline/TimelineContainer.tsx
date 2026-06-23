@@ -2,7 +2,8 @@
  * Timeline container (SPEC §5). Owns the scroll area, the content + ruler
  * canvases, the fixed track-header column, and the playhead/snap overlays, plus
  * the pointer-gesture decision tree (SPEC §5.8, §9): scrub, select, move, trim,
- * razor split, marquee, and Option/Cmd wheel zoom/pan.
+ * razor split, marquee, and the trackpad wheel model (pinch/Option zoom,
+ * two-finger pan, Cmd horizontal scroll).
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -217,10 +218,14 @@ export function TimelineContainer() {
     [scrollLeft, scrollTop],
   );
 
-  // --- Wheel: Option=zoom (cursor-anchored), Cmd=pan, else scroll ---
+  // --- Wheel (CapCut/剪映 trackpad model) ---
+  //   pinch (ctrlKey, set by the browser on trackpad pinch) OR Option (altKey,
+  //     for mouse-wheel users) → cursor-anchored zoom;
+  //   Cmd (metaKey) → horizontal pan (a mouse wheel scrolls the timeline);
+  //   bare two-finger scroll → pan both axes (deltaX horizontal, deltaY vertical).
   const onWheel = useCallback(
-    (e: React.WheelEvent) => {
-      if (e.altKey) {
+    (e: WheelEvent) => {
+      if (e.ctrlKey || e.altKey) {
         e.preventDefault();
         const { docX } = toDoc(e);
         const anchorFrame = docX / zoomScale;
@@ -234,12 +239,15 @@ export function TimelineContainer() {
         const newDocX = anchorFrame * newScale;
         const viewX = docX - scrollLeft;
         setScroll(Math.max(0, newDocX - viewX), scrollTop);
-      } else if (e.metaKey || e.ctrlKey) {
+      } else if (e.metaKey) {
         e.preventDefault();
-        // Upstream (TimelineInputController): delta = scrollingDeltaX * panSpeed,
-        // with deltaX taking priority over deltaY. panSpeed (5) is applied 1:1.
+        // Mouse-wheel horizontal scroll: deltaX takes priority over deltaY.
         setScroll(Math.max(0, scrollLeft + (e.deltaX || e.deltaY) * ZOOM.panSpeed), scrollTop);
       } else {
+        // Bare two-finger scroll pans the timeline (剪映-style): horizontal swipe
+        // → scrollLeft, vertical → scrollTop. preventDefault stops the macOS
+        // two-finger swipe from triggering browser back/forward navigation.
+        e.preventDefault();
         const maxLeft = Math.max(0, docWidth - viewport.width);
         const maxTop = Math.max(0, docHeight - viewport.height);
         setScroll(
@@ -250,6 +258,21 @@ export function TimelineContainer() {
     },
     [toDoc, zoomScale, scrollLeft, scrollTop, setZoomScale, setScroll, docWidth, docHeight, viewport],
   );
+
+  // Attach the wheel handler natively with { passive: false }. React's onWheel
+  // is passive, so preventDefault() there silently no-ops — but a trackpad pinch
+  // is Ctrl+wheel, which the webview would otherwise turn into a PAGE zoom, and a
+  // two-finger swipe could trigger back/forward navigation. A latest-ref keeps
+  // the listener stable while always running the current closure.
+  const onWheelRef = useRef(onWheel);
+  onWheelRef.current = onWheel;
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => onWheelRef.current(e);
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
   // --- Pointer down: the decision tree (SPEC §5.8) ---
   const onPointerDown = useCallback(
@@ -497,7 +520,6 @@ export function TimelineContainer() {
     <div
       ref={viewportRef}
       style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}
-      onWheel={onWheel}
     >
       {/* Content canvas (clips + backgrounds), positioned right of header column. */}
       <canvas
