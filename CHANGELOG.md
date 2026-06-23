@@ -15,7 +15,8 @@
   - 上游 palmier-pro 无此模块,#37 为 OpenTake 新增子系统,不要求 1:1。剩:库→时间线拖拽（现用「导入当前项目」按钮)、媒体面板「星标→library_favorite」接线、收藏从 localStorage 迁后端。
 - **文本工具 MVP**（#96,PR #107）:Toolbar `T` 按钮接线 `addTextClip()`、新增 `TextTab.tsx` 文字内容编辑、Inspector 路由 text tab。字体/字号/颜色等 `textStyle` 留后续（依赖后端 ClipProperties 扩展）。
 - **SRT/VTT 字幕导出纯逻辑**（#29 D 层切片,PR #110）:`crates/opentake-domain/src/subtitle_export.rs` 把按 `caption_group_id` 分组的字幕 clip 序列化为 SubRip/WebVTT 字符串（零 IO、零新依赖、16 单测）。导出层/agent 工具/前端对话框留后续切片。
-- **整条时间线视频导出编排**（Phase 5 spine,PR #112）:`src-tauri/src/export.rs` + `export_video` 命令,逐帧 `Compositor::render_to_rgba` → `VideoEncoder::push_frame` → `finish`,全分辨率 H.264/.mp4（H.265/ProRes/音频/进度取消留后续）。含 ffmpeg/GPU 门控集成测试。自包含复制 preview 路径,未碰 `composite_frame`。
+- **整条时间线视频导出编排**（Phase 5 spine,PR #112）:`src-tauri/src/export.rs` + `export_video` 命令,逐帧 `Compositor::render_to_rgba` → `VideoEncoder::push_frame` → `finish`,全分辨率 H.264/.mp4（H.265/ProRes/进度取消留后续）。含 ffmpeg/GPU 门控集成测试。自包含复制 preview 路径,未碰 `composite_frame`。
+- **导出线性音频混音**（Phase 5,PR #117）:`crates/opentake-media/src/encode/mix.rs` 逐 clip 单声道 PCM 按帧偏移铺放 + `volume_at` 增益包络 + 叠加 + 硬限幅;`VideoEncoder::finish()` 第二趟 ffmpeg mux AAC（`-c:v copy`/`-shortest`,mux 失败回退视频-only),真接通原 dead `push_audio`;含 AAC 轨 + 视频-only 不漏音轨 + 临时件清理集成测试。无音频时仍产出与 #112 相同视频-only 文件。
 - **`list_models` 工具接线**（#9/#10 切片,PR #111）:`opentake-agent` 从存根接 `opentake-gen` 内置静态 catalog,`?type=` 过滤 + `{ models, loaded }` JSON,纯本地无网络/BYOK。
 - **caption-group 样式批量同步纯逻辑**（#29 切片,PR #113）:`crates/opentake-domain/src/caption_sync.rs` 把某 `text_style` 批量套到同一 `caption_group_id` 的所有字幕 clip（不可变 / 跨组隔离 / legacy 安全,12 单测）。接 UI/命令留后续。
 
@@ -23,7 +24,7 @@
 
 | PR | 处置 | 说明 |
 |---|---|---|
-| #104 #106 #107 #110 #111 #112 #113 #115 | **已合并** | CI 双绿 + 审核通过（对抗验证 CONFIRM / 主控亲审）的纯新增项;**#115 收口 #37 全局库 epic** |
+| #104 #106 #107 #110 #111 #112 #113 #115 #117 | **已合并** | CI 双绿 + 审核通过（对抗验证 CONFIRM / 主控亲审）的纯新增项;**#115 收口 #37 全局库 epic**;#117 导出加音频混音 |
 | #76 | **已关闭** | bundle id 改名冗余（main 已是 `com.opentake.desktop`,#74 已合） |
 | #77 #78 #79 #105 #108 | **请修改（@作者）** | 详见下「待审 PR」 |
 
