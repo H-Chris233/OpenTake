@@ -43,6 +43,7 @@ export function MediaTabBar({
     <div
       role="tablist"
       style={{
+        flex: "0 0 auto",
         display: "flex",
         alignItems: "stretch",
         gap: "var(--space-md)",
@@ -50,6 +51,7 @@ export function MediaTabBar({
         background: "var(--bg-surface)",
         borderBottom: "var(--bw-thin) solid var(--border-primary)",
         overflowX: "auto",
+        overflowY: "hidden",
       }}
     >
       {MAIN_TABS.map((tab) => {

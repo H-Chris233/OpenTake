@@ -116,6 +116,7 @@ const zh: Dict = {
   "timeline.mute": "静音",
   "timeline.hide": "隐藏",
   "timeline.syncLock": "同步锁定",
+  "timeline.dropHint": "将媒体拖到此处开始",
 
   // Preview
   "preview.fit": "适应",
@@ -272,6 +273,7 @@ const en: Dict = {
   "timeline.mute": "Mute",
   "timeline.hide": "Hide",
   "timeline.syncLock": "Sync lock",
+  "timeline.dropHint": "Drop media here to start",
 
   "preview.fit": "Fit",
   "preview.timelineTab": "Timeline",

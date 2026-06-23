@@ -20,6 +20,9 @@ interface DrawOpts {
   /** The clip's source media file is offline (moved/deleted). Draws the error
    *  wash (port of `ClipRenderer` missing state). */
   missing?: boolean;
+  /** This clip is being dragged (move/trim ghost): drawn semi-transparent at its
+   *  live position so it follows the cursor. */
+  ghost?: boolean;
 }
 
 /** Linear amplitude → dB, clamped to the volume slider range. 1:1 port of
@@ -99,6 +102,9 @@ export function drawClip(
   const r = TRIM.clipCornerRadius;
 
   ctx.save();
+  // Ghost (active move/trim): drawn semi-transparent so the user sees it follow
+  // the cursor while the originals stay put underneath.
+  if (opts.ghost) ctx.globalAlpha = 0.6;
 
   // 1. Base fill (ClipRenderer:74-81): selected 0.45 else 0.30.
   roundRectPath(ctx, x, y, width, height, r);

@@ -18,7 +18,8 @@ import {
 import { firstAudioIndex } from "../../lib/zones";
 import { clampTrimDeltaFrames, trimSourceValues } from "../../lib/clip";
 import { collectTargets, findSnap } from "../../lib/snap";
-import { paintTimeline } from "./timelineCanvas";
+import { paintTimeline, type DragPaint } from "./timelineCanvas";
+import { useT } from "../../i18n";
 import { paintRuler } from "./rulerCanvas";
 import { TrackHeaderColumn } from "./TrackHeaderColumn";
 import { Playhead } from "./Playhead";
@@ -69,7 +70,8 @@ export function TimelineContainer() {
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const dragRef = useRef<DragState>(null);
   const [snapFrame, setSnapFrame] = useState<number | null>(null);
-  const [, forceTick] = useState(0);
+  const [dragTick, forceTick] = useState(0);
+  const t = useT();
   // Waveform sample cache (media id → buckets), loaded on demand from Rust.
   const waveformsRef = useRef<Map<string, number[]>>(new Map());
   const [waveformVersion, setWaveformVersion] = useState(0);
@@ -135,6 +137,25 @@ export function TimelineContainer() {
     canvas.style.height = `${viewport.height}px`;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Project the active drag so dragged clips render at their live position
+    // (ghost) — `dragTick` (bumped each pointer-move) re-runs this effect.
+    const d = dragRef.current;
+    let drag: DragPaint | undefined;
+    if (d?.kind === "move") {
+      drag = {
+        kind: "move",
+        ids: new Set(d.companions),
+        deltaFrames: d.deltaFrames,
+        trackDelta: d.targetTrack - d.startTrack,
+      };
+    } else if (d?.kind === "trimLeft" || d?.kind === "trimRight") {
+      drag = {
+        kind: "trim",
+        clipId: d.hit.clip.id,
+        edge: d.kind === "trimLeft" ? "left" : "right",
+        deltaFrames: d.deltaFrames,
+      };
+    }
     paintTimeline(ctx, {
       timeline,
       pixelsPerFrame: zoomScale,
@@ -150,6 +171,8 @@ export function TimelineContainer() {
       viewHeight: viewport.height,
       waveforms: waveformsRef.current,
       missingMediaRefs,
+      emptyLabel: t("timeline.dropHint"),
+      drag,
     });
   }, [
     timeline,
@@ -164,6 +187,8 @@ export function TimelineContainer() {
     firstAudio,
     waveformVersion,
     missingMediaRefs,
+    dragTick,
+    t,
   ]);
 
   // Load waveform samples for every audio clip's source on demand (cached by

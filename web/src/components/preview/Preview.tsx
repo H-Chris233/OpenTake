@@ -66,11 +66,15 @@ export function Preview() {
   // GPU composite is fetched only when PAUSED/scrubbing (accurate text/effects,
   // and no per-frame ffmpeg/PNG churn while playing).
   const timelinePlaying = !previewing && isPlaying && timeline.tracks.length > 0;
+  // Throttle paused/scrub composite fetches (~11fps): each composite is an
+  // ffmpeg decode + PNG + base64 decode on the main thread, so firing one per
+  // scrubbed frame overloads the UI (the "scrub is laggy / doesn't follow"
+  // report). The playhead itself still moves instantly; the frame catches up.
   const timelineFrameUrl = useTimelineFrame(
     Math.min(Math.round(activeFrame), Math.max(0, timelineTotal - 1)),
     !previewing && timeline.tracks.length > 0 && !isPlaying,
     timeline,
-    0,
+    90,
   );
   const fps = timeline.fps;
   const total = previewing
@@ -139,19 +143,29 @@ export function Preview() {
           <TimelinePlayback timeline={timeline} fps={fps} />
         ) : timelineFrameUrl ? (
           // Rust GPU composite of the timeline at the current playhead (#47).
-          <img
-            src={timelineFrameUrl}
-            alt=""
-            draggable={false}
+          // Wrapped in an aspect-fit box (same as the placeholder) so the frame
+          // always centers + fills the largest project-aspect box regardless of
+          // the PNG's intrinsic pixel size — fixes the frame rendering tiny in a
+          // corner.
+          <div
             style={{
+              aspectRatio: `${timeline.width} / ${timeline.height}`,
+              height: "100%",
               maxWidth: "100%",
               maxHeight: "100%",
-              objectFit: "contain",
-              display: "block",
               background: "var(--bg-preview-canvas)",
               border: "1px solid rgba(255,255,255,0.08)",
+              overflow: "hidden",
+              display: "flex",
             }}
-          />
+          >
+            <img
+              src={timelineFrameUrl}
+              alt=""
+              draggable={false}
+              style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+            />
+          </div>
         ) : (
           // Empty / no-frame: a framed 16:9 canvas surface placeholder.
           <div

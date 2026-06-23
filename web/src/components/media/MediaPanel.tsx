@@ -57,7 +57,9 @@ export function MediaPanel() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
       <MediaTabBar active={mediaTab} onSelect={setMediaTab} />
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+      {/* minHeight:0 lets the inner grid actually scroll instead of overflowing
+          and pushing the whole panel (which hid the tab bar + killed scroll). */}
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {isLibraryTab ? (
           <MediaTab kind={mediaTab as MediaTabKind} />
         ) : (
@@ -90,9 +92,10 @@ function MediaTab({ kind }: { kind: MediaTabKind }) {
 
   return (
     <>
-      {/* Toolbar */}
+      {/* Toolbar (fixed height; only the grid below scrolls) */}
       <div
         style={{
+          flex: "0 0 auto",
           display: "flex",
           flexDirection: "column",
           gap: "var(--space-xs)",
