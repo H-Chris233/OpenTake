@@ -79,6 +79,21 @@ pub fn get_default_project_dir(app: AppHandle) -> Result<String, String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// `export_fcpxml`: write the current timeline to `path` as XMEML 4 (Final Cut
+/// Pro 7 XML, `.xml`). Despite the command name, the produced format is XMEML —
+/// see `opentake_project::fcpxml` for why (Premiere Pro doesn't read FCPXML
+/// natively, so upstream exports XMEML; DaVinci/FCP still import FCP7 XML). Reads
+/// the timeline / media manifest / project dir from the core, builds the XML via
+/// the pure `export_xmeml`, and writes the file.
+#[tauri::command]
+pub fn export_fcpxml(core: State<'_, AppCore>, path: String) -> Result<(), String> {
+    let timeline = core.get_timeline().timeline;
+    let manifest = core.media();
+    let project_dir = core.project_dir();
+    let xml = opentake_project::export_xmeml(&timeline, &manifest, project_dir.as_deref());
+    std::fs::write(&path, xml).map_err(|e| e.to_string())
+}
+
 /// `can_undo` / `can_redo`: enable/disable the toolbar affordances.
 #[tauri::command]
 pub fn can_undo(core: State<'_, AppCore>) -> bool {
@@ -148,6 +163,9 @@ pub enum EditRequest {
     RippleDeleteRanges {
         track_index: usize,
         ranges: Vec<FrameRangeDto>,
+    },
+    RippleDeleteClips {
+        clip_ids: Vec<String>,
     },
     AddTexts {
         entries: Vec<TextEntryDto>,
@@ -228,6 +246,9 @@ impl EditRequest {
                 track_index,
                 ranges: ranges.into_iter().map(FrameRangeDto::into_range).collect(),
             },
+            EditRequest::RippleDeleteClips { clip_ids } => {
+                EditCommand::RippleDeleteClips { clip_ids }
+            }
             EditRequest::AddTexts { entries } => EditCommand::AddTexts {
                 entries: entries.into_iter().map(TextEntryDto::into_entry).collect(),
             },

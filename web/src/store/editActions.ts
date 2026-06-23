@@ -9,7 +9,9 @@ import { isTauri } from "../lib/api";
 import { forceRefresh } from "./sync";
 import { useEditorUiStore } from "./uiStore";
 import { useProjectStore } from "./projectStore";
+import { trimToPlayheadEdits } from "../lib/clip";
 import type {
+  Clip,
   ClipEntryReq,
   ClipMoveReq,
   ClipPropertiesReq,
@@ -118,16 +120,61 @@ export async function redo() {
   if (!isTauri) await forceRefresh();
 }
 
-/** Split every selected clip at the current playhead (Toolbar / ⌘K). Splitting a
- *  clip the playhead doesn't intersect is a no-op in the core, so looping over
- *  the whole selection is safe. */
+/** Split at the current playhead (Toolbar / ⌘K). Splits the SELECTED clips the
+ *  playhead intersects; if nothing is selected, splits every clip under the
+ *  playhead (so split works without first selecting — matches editor norms).
+ *  A clip the playhead doesn't intersect is a no-op in the core. */
 export async function splitAtPlayhead() {
   const ui = useEditorUiStore.getState();
   const frame = Math.round(ui.activeFrame);
   const selected = [...ui.selectedClipIds];
-  for (const id of selected) {
+  let ids = selected;
+  if (ids.length === 0) {
+    // No selection: target every clip the playhead currently intersects.
+    const timeline = useProjectStore.getState().timeline;
+    ids = [];
+    for (const track of timeline.tracks) {
+      for (const c of track.clips) {
+        if (frame > c.startFrame && frame < c.startFrame + c.durationFrames) ids.push(c.id);
+      }
+    }
+  }
+  for (const id of ids) {
     await splitClip(id, frame);
   }
+}
+
+/** Clips the playhead is strictly inside, restricted to the selection when one
+ *  exists (else all clips under the playhead) — the target set for trim-to-
+ *  playhead, matching `splitAtPlayhead`'s "act on what's under the playhead". */
+function clipsUnderPlayhead(): Clip[] {
+  const ui = useEditorUiStore.getState();
+  const frame = Math.round(ui.activeFrame);
+  const selected = new Set(ui.selectedClipIds);
+  const restrict = selected.size > 0;
+  const out: Clip[] = [];
+  for (const track of useProjectStore.getState().timeline.tracks) {
+    for (const c of track.clips) {
+      if (frame <= c.startFrame || frame >= c.startFrame + c.durationFrames) continue;
+      if (restrict && !selected.has(c.id)) continue;
+      out.push(c);
+    }
+  }
+  return out;
+}
+
+/** Trim each target clip's IN point to the playhead (Q / Toolbar `[` — 剪映
+ *  "删除播放头左侧"). The right edge stays put; the left part is removed. */
+export async function trimStartToPlayhead() {
+  const frame = Math.round(useEditorUiStore.getState().activeFrame);
+  await trimClips(trimToPlayheadEdits(clipsUnderPlayhead(), frame, "left"));
+}
+
+/** Trim each target clip's OUT point to the playhead (W / Toolbar `]` — 剪映
+ *  "删除播放头右侧"). The left edge stays put; the right part is removed. */
+export async function trimEndToPlayhead() {
+  const frame = Math.round(useEditorUiStore.getState().activeFrame);
+  await trimClips(trimToPlayheadEdits(clipsUnderPlayhead(), frame, "right"));
 }
 
 /** Delete selected clips (⌫ / menu). */
@@ -138,6 +185,16 @@ export async function deleteSelectedClips() {
     await removeClips(ids);
     ui.clearSelection();
   }
+}
+
+/** Ripple-delete selected clips (⇧⌫): remove and close the gaps, shifting
+ *  sync-locked followers (the core refuses if a follower would collide). */
+export async function rippleDeleteSelectedClips() {
+  const ui = useEditorUiStore.getState();
+  const ids = [...ui.selectedClipIds];
+  if (ids.length === 0) return;
+  await applyAndRefresh({ type: "rippleDeleteClips", clipIds: ids });
+  ui.clearSelection();
 }
 
 // MARK: - Media -> timeline (drag and drop)

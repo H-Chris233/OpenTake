@@ -2,7 +2,8 @@
  * Timeline container (SPEC §5). Owns the scroll area, the content + ruler
  * canvases, the fixed track-header column, and the playhead/snap overlays, plus
  * the pointer-gesture decision tree (SPEC §5.8, §9): scrub, select, move, trim,
- * razor split, marquee, and Option/Cmd wheel zoom/pan.
+ * razor split, marquee, and the CapCut/剪映 wheel model (pinch or Cmd/Ctrl
+ * zoom, Option horizontal scroll, bare/two-finger pan).
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -15,8 +16,10 @@ import {
   trackAt,
 } from "../../lib/geometry";
 import { firstAudioIndex } from "../../lib/zones";
+import { clampTrimDeltaFrames, trimSourceValues } from "../../lib/clip";
 import { collectTargets, findSnap } from "../../lib/snap";
-import { paintTimeline } from "./timelineCanvas";
+import { paintTimeline, type DragPaint } from "./timelineCanvas";
+import { useT } from "../../i18n";
 import { paintRuler } from "./rulerCanvas";
 import { TrackHeaderColumn } from "./TrackHeaderColumn";
 import { Playhead } from "./Playhead";
@@ -24,7 +27,9 @@ import { SnapIndicator } from "./SnapIndicator";
 import { hitTestClip, expandLinkGroup, clipsInRect, type ClipHit } from "./hitTest";
 import { useProjectStore } from "../../store/projectStore";
 import { useEditorUiStore } from "../../store/uiStore";
+import { useMediaStore } from "../../store/mediaStore";
 import * as edit from "../../store/editActions";
+import { getWaveform } from "../../lib/api";
 
 type DragState =
   | { kind: "scrub" }
@@ -50,6 +55,14 @@ export function TimelineContainer() {
   const selectClips = useEditorUiStore((s) => s.selectClips);
   const clearSelection = useEditorUiStore((s) => s.clearSelection);
   const trackHeights = useEditorUiStore((s) => s.trackDisplayHeights);
+  const mediaItems = useMediaStore((s) => s.items);
+
+  // Asset ids whose source file is offline → clips referencing them get the
+  // error wash. Recomputed when the catalog changes (so a relink clears it).
+  const missingMediaRefs = useMemo(
+    () => new Set(mediaItems.filter((m) => m.missing).map((m) => m.id)),
+    [mediaItems],
+  );
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -57,7 +70,11 @@ export function TimelineContainer() {
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const dragRef = useRef<DragState>(null);
   const [snapFrame, setSnapFrame] = useState<number | null>(null);
-  const [, forceTick] = useState(0);
+  const [dragTick, forceTick] = useState(0);
+  const t = useT();
+  // Waveform sample cache (media id → buckets), loaded on demand from Rust.
+  const waveformsRef = useRef<Map<string, number[]>>(new Map());
+  const [waveformVersion, setWaveformVersion] = useState(0);
 
   const total = useMemo(() => totalFrames(timeline), [timeline]);
   const docWidth = useMemo(
@@ -120,6 +137,25 @@ export function TimelineContainer() {
     canvas.style.height = `${viewport.height}px`;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Project the active drag so dragged clips render at their live position
+    // (ghost) — `dragTick` (bumped each pointer-move) re-runs this effect.
+    const d = dragRef.current;
+    let drag: DragPaint | undefined;
+    if (d?.kind === "move") {
+      drag = {
+        kind: "move",
+        ids: new Set(d.companions),
+        deltaFrames: d.deltaFrames,
+        trackDelta: d.targetTrack - d.startTrack,
+      };
+    } else if (d?.kind === "trimLeft" || d?.kind === "trimRight") {
+      drag = {
+        kind: "trim",
+        clipId: d.hit.clip.id,
+        edge: d.kind === "trimLeft" ? "left" : "right",
+        deltaFrames: d.deltaFrames,
+      };
+    }
     paintTimeline(ctx, {
       timeline,
       pixelsPerFrame: zoomScale,
@@ -133,6 +169,10 @@ export function TimelineContainer() {
       scrollTop,
       viewWidth: viewport.width,
       viewHeight: viewport.height,
+      waveforms: waveformsRef.current,
+      missingMediaRefs,
+      emptyLabel: t("timeline.dropHint"),
+      drag,
     });
   }, [
     timeline,
@@ -145,7 +185,36 @@ export function TimelineContainer() {
     docWidth,
     docHeight,
     firstAudio,
+    waveformVersion,
+    missingMediaRefs,
+    dragTick,
+    t,
   ]);
+
+  // Load waveform samples for every audio clip's source on demand (cached by
+  // media id), then trigger a repaint. The real bars replace the faint band
+  // once the Rust `get_waveform` cache resolves.
+  useEffect(() => {
+    const wanted = new Set<string>();
+    for (const track of timeline.tracks) {
+      for (const clip of track.clips) {
+        if (clip.mediaType === "audio") wanted.add(clip.mediaRef);
+      }
+    }
+    let cancelled = false;
+    for (const ref of wanted) {
+      if (waveformsRef.current.has(ref)) continue;
+      waveformsRef.current.set(ref, []); // mark in-flight so we fetch once
+      void getWaveform(ref).then((samples) => {
+        if (cancelled || !samples || samples.length === 0) return;
+        waveformsRef.current.set(ref, samples);
+        setWaveformVersion((v) => v + 1);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [timeline]);
 
   // Paint ruler canvas (sticky top).
   useEffect(() => {
@@ -174,10 +243,17 @@ export function TimelineContainer() {
     [scrollLeft, scrollTop],
   );
 
-  // --- Wheel: Option=zoom (cursor-anchored), Cmd=pan, else scroll ---
+  // --- Wheel: 1:1 with CapCut/剪映's scroll-wheel & trackpad model ---
+  //   • pinch (ctrlKey, set by the browser on a trackpad pinch) OR Cmd (Mac) /
+  //     Ctrl (Win) + scroll → cursor-anchored ZOOM (剪映: "Ctrl/Cmd + 滚轮 缩放，
+  //     以当前位置为原点").
+  //   • Option (altKey) + scroll → HORIZONTAL scroll (剪映: "Alt + 滚轮 = 左右").
+  //   • bare scroll / two-finger swipe → pan (剪映: "滚轮 = 上下"); on a trackpad
+  //     deltaX also pans horizontally, so a two-finger swipe moves the timeline
+  //     in any direction.
   const onWheel = useCallback(
-    (e: React.WheelEvent) => {
-      if (e.altKey) {
+    (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const { docX } = toDoc(e);
         const anchorFrame = docX / zoomScale;
@@ -191,12 +267,18 @@ export function TimelineContainer() {
         const newDocX = anchorFrame * newScale;
         const viewX = docX - scrollLeft;
         setScroll(Math.max(0, newDocX - viewX), scrollTop);
-      } else if (e.metaKey || e.ctrlKey) {
+      } else if (e.altKey) {
         e.preventDefault();
-        // Upstream (TimelineInputController): delta = scrollingDeltaX * panSpeed,
-        // with deltaX taking priority over deltaY. panSpeed (5) is applied 1:1.
-        setScroll(Math.max(0, scrollLeft + (e.deltaX || e.deltaY) * ZOOM.panSpeed), scrollTop);
+        // Option + scroll = horizontal (剪映 Alt+滚轮). A mouse wheel only has
+        // deltaY, so fall back to it when there's no deltaX.
+        const maxLeft = Math.max(0, docWidth - viewport.width);
+        const dx = (e.deltaX || e.deltaY) * ZOOM.panSpeed;
+        setScroll(Math.max(0, Math.min(maxLeft, scrollLeft + dx)), scrollTop);
       } else {
+        // Bare scroll / two-finger swipe pans the timeline: vertical (剪映 上下)
+        // plus horizontal on a trackpad. preventDefault stops the macOS
+        // two-finger swipe from triggering browser back/forward navigation.
+        e.preventDefault();
         const maxLeft = Math.max(0, docWidth - viewport.width);
         const maxTop = Math.max(0, docHeight - viewport.height);
         setScroll(
@@ -207,6 +289,21 @@ export function TimelineContainer() {
     },
     [toDoc, zoomScale, scrollLeft, scrollTop, setZoomScale, setScroll, docWidth, docHeight, viewport],
   );
+
+  // Attach the wheel handler natively with { passive: false }. React's onWheel
+  // is passive, so preventDefault() there silently no-ops — but a trackpad pinch
+  // is Ctrl+wheel, which the webview would otherwise turn into a PAGE zoom, and a
+  // two-finger swipe could trigger back/forward navigation. A latest-ref keeps
+  // the listener stable while always running the current closure.
+  const onWheelRef = useRef(onWheel);
+  onWheelRef.current = onWheel;
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => onWheelRef.current(e);
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
   // --- Pointer down: the decision tree (SPEC §5.8) ---
   const onPointerDown = useCallback(
@@ -225,10 +322,14 @@ export function TimelineContainer() {
 
       const hit = hitTestClip(timeline, docX, docY, zoomScale, trackHeights);
 
-      // Razor tool + clip -> split at click frame.
+      // Razor tool + clip -> split at the (snapped) click frame. Snapping to
+      // clip edges / playhead matches upstream's razor (a cut landing on the
+      // clip's own edge is a backend no-op, which is fine).
       if (toolMode === "razor" && hit) {
-        const f = frameAt(docX, zoomScale);
-        void edit.splitClip(hit.clip.id, f);
+        const raw = frameAt(docX, zoomScale);
+        const targets = collectTargets(timeline, new Set(), activeFrame);
+        const snap = findSnap(raw, targets, zoomScale, null);
+        void edit.splitClip(hit.clip.id, snap ? snap.frame : raw);
         dragRef.current = null;
         return;
       }
@@ -352,6 +453,9 @@ export function TimelineContainer() {
         } else {
           setSnapFrame(null);
         }
+        // Clamp so the clip keeps a ≥1-frame duration and can't run past the
+        // available source (upstream's mouseDragged trim clamp).
+        deltaFrames = clampTrimDeltaFrames(d.hit.clip, d.kind === "trimLeft" ? "left" : "right", deltaFrames);
         dragRef.current = { ...d, deltaFrames };
         forceTick((n) => n + 1);
         return;
@@ -378,40 +482,63 @@ export function TimelineContainer() {
 
       if (d.kind === "move") {
         if (d.deltaFrames === 0 && d.targetTrack === d.startTrack) return; // no-op
-        const moves = d.companions
+        // Resolve every dragged clip's current location.
+        const locs = d.companions
           .map((id) => {
             const loc = findClipLoc(timeline, id);
-            if (!loc) return null;
-            const clip = timeline.tracks[loc[0]].clips[loc[1]];
-            const trackDelta = d.targetTrack - d.startTrack;
-            const toTrack = clamp(loc[0] + trackDelta, 0, timeline.tracks.length - 1);
-            // Cross-track only when type-compatible; else stay.
-            const compatible = compatibleTracks(timeline, loc[0], toTrack);
-            return {
-              clipId: id,
-              toTrack: compatible ? toTrack : loc[0],
-              toFrame: Math.max(0, clip.startFrame + d.deltaFrames),
-            };
+            return loc
+              ? { id, ti: loc[0], clip: timeline.tracks[loc[0]].clips[loc[1]] }
+              : null;
           })
-          .filter((m): m is NonNullable<typeof m> => m !== null);
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+        if (locs.length === 0) return;
+
+        // One group-floor FRAME delta so the earliest clip lands at >=0 and the
+        // whole selection keeps its relative spacing (not per-clip max(0,...)).
+        const minStart = Math.min(...locs.map((l) => l.clip.startFrame));
+        const frameDelta = Math.max(d.deltaFrames, -minStart);
+
+        // One group TRACK delta: step toward 0 until every clip stays in-bounds
+        // and lands on a type-compatible track (rigid group, not per-clip clamp).
+        const rawTrackDelta = d.targetTrack - d.startTrack;
+        let trackDelta = rawTrackDelta;
+        const step = rawTrackDelta > 0 ? -1 : 1;
+        while (trackDelta !== 0) {
+          const ok = locs.every((l) => {
+            const to = l.ti + trackDelta;
+            return to >= 0 && to < timeline.tracks.length && compatibleTracks(timeline, l.ti, to);
+          });
+          if (ok) break;
+          trackDelta += step;
+        }
+
+        if (frameDelta === 0 && trackDelta === 0) return; // nothing actually moves
+        const moves = locs.map((l) => ({
+          clipId: l.id,
+          toTrack: l.ti + trackDelta,
+          toFrame: l.clip.startFrame + frameDelta,
+        }));
         void edit.moveClips(moves);
         return;
       }
 
-      if (d.kind === "trimLeft") {
+      if (d.kind === "trimLeft" || d.kind === "trimRight") {
         if (d.deltaFrames === 0) return;
-        const newTrim = Math.max(0, d.startTrim + d.deltaFrames);
-        void edit.trimClips([
-          { clipId: d.hit.clip.id, trimStartFrame: newTrim, trimEndFrame: d.hit.clip.trimEndFrame },
-        ]);
-        return;
-      }
-      if (d.kind === "trimRight") {
-        if (d.deltaFrames === 0) return;
-        const newTrim = Math.max(0, d.startTrim - d.deltaFrames);
-        void edit.trimClips([
-          { clipId: d.hit.clip.id, trimStartFrame: d.hit.clip.trimStartFrame, trimEndFrame: newTrim },
-        ]);
+        const edge = d.kind === "trimLeft" ? "left" : "right";
+        // Linked partners trim together (upstream commitTrim): apply the SAME
+        // timeline-frame edge delta to every clip in the link group, each
+        // converted to its own SOURCE-frame trim via round(delta*speed).
+        const groupIds = expandLinkGroup(timeline, new Set([d.hit.clip.id]));
+        const edits = [...groupIds]
+          .map((id) => {
+            const loc = findClipLoc(timeline, id);
+            if (!loc) return null;
+            const clip = timeline.tracks[loc[0]].clips[loc[1]];
+            const v = trimSourceValues(clip, edge, d.deltaFrames);
+            return { clipId: id, trimStartFrame: v.trimStartFrame, trimEndFrame: v.trimEndFrame };
+          })
+          .filter((e): e is NonNullable<typeof e> => e !== null);
+        void edit.trimClips(edits);
       }
     },
     [timeline],
@@ -424,7 +551,6 @@ export function TimelineContainer() {
     <div
       ref={viewportRef}
       style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}
-      onWheel={onWheel}
     >
       {/* Content canvas (clips + backgrounds), positioned right of header column. */}
       <canvas
@@ -516,10 +642,6 @@ function findClipLoc(timeline: { tracks: { clips: { id: string }[] }[] }, id: st
     if (ci >= 0) return [ti, ci];
   }
   return null;
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
 }
 
 function compatibleTracks(
