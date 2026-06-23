@@ -66,8 +66,20 @@ export function TimelinePlayback({ timeline, fps }: { timeline: Timeline; fps: n
     let cb = cbCache.current.get(id);
     if (!cb) {
       cb = (el: HTMLMediaElement | null) => {
-        if (el) els.current.set(id, el);
-        else els.current.delete(id);
+        if (el) {
+          els.current.set(id, el);
+        } else {
+          // Detaching (clip left the active window, or the layer is
+          // unmounting on pause). A media element REMOVED from the DOM keeps
+          // playing — the browser does not auto-pause it — so we must pause it
+          // here, while we still hold the reference. React detaches refs
+          // (commit phase, synchronous) BEFORE the effect cleanup (passive,
+          // async) runs, so by the time the cleanup loop runs `els` is already
+          // empty; pausing on detach is what actually stops playback. Without
+          // this, hitting Pause leaves the audio/video playing on.
+          els.current.get(id)?.pause();
+          els.current.delete(id);
+        }
       };
       cbCache.current.set(id, cb);
     }
