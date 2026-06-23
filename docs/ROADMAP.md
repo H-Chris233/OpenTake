@@ -45,7 +45,7 @@
 ## Phase 5 — 导出
 - **做**:wgpu 逐帧合成 → ffmpeg 编码;复刻预设(H.264/H.265/ProRes × 三档分辨率),逐项对齐码率/profile/色彩逼近上游;`renderSize` 取偶数。
 - **验证**:导出 mp4 可播放;与上游导出对比画质/时长/音画同步一致。
-- **进度**:整条时间线逐帧导出 spine 已落地(#112,`src-tauri/src/export.rs` + `export_video` 命令,H.264/.mp4 全分辨率,逐帧 `Compositor::render_to_rgba` → `VideoEncoder` 编码,含 ffmpeg/GPU 门控集成测试)。剩 H.265/ProRes 预设 + 音频混流 + 进度/取消。
+- **进度**:整条时间线逐帧导出 spine 已落地(#112,`src-tauri/src/export.rs` + `export_video` 命令,H.264/.mp4 全分辨率,逐帧 `Compositor::render_to_rgba` → `VideoEncoder` 编码,含 ffmpeg/GPU 门控集成测试)。**线性音频混音已接入**(#117,`opentake-media/src/encode/mix.rs` 逐 clip PCM 按帧偏移 + volume_at 增益 + 叠加硬限幅,`finish()` 第二趟 ffmpeg mux AAC/`-shortest`,mux 失败回退视频-only,含 AAC 轨集成测试)。剩 H.265/ProRes 预设 + 进度/取消(音频重采样曲线/pan/立体声/动态为后续)。
 
 ## Phase 6 — React 前端
 对应 ui-rebuild 模块(Timeline/MediaPanel/Inspector/Settings/Toolbar/Help/UI)。
