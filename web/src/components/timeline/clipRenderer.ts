@@ -126,9 +126,9 @@ export function drawClip(
   }
   ctx.restore();
 
-  // 3. Opacity fade wedges (non-audio) — drawn as triangular ramps.
+  // 3. Opacity fade wedges (non-audio) — smoothstep curves with a knee near top.
   if (clip.mediaType !== "audio") {
-    drawFades(ctx, clip, rect);
+    drawFades(ctx, clip, rect, opts.isSelected);
   }
 
   // 4. Left color strip (ClipRenderer:114-119): solid, more saturated.
@@ -237,28 +237,106 @@ function drawWaveform(
   }
 }
 
-function drawFades(ctx: CanvasRenderingContext2D, clip: Clip, rect: ClipRect) {
+const FADE_KNEE_TOP_INSET = 4;
+const FADE_EDGE_INSET = 6;
+const FADE_KNEE_SIZE = 7;
+
+/** Standard smoothstep (matches the shader + upstream `smoothstep`). */
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+/** Sample points along a fade ramp (1:1 with `fadeCurvePoints`): a straight line
+ *  for linear/hold, a 12-step smoothstep curve for smooth. */
+function fadeCurvePoints(
+  sx: number,
+  sy: number,
+  ex: number,
+  ey: number,
+  interp: string,
+): Array<[number, number]> {
+  if (interp !== "smooth") return [[ex, ey]];
+  const steps = 12;
+  const out: Array<[number, number]> = [];
+  for (let s = 1; s <= steps; s++) {
+    const t = s / steps;
+    out.push([sx + (ex - sx) * t, sy + (ey - sy) * smoothstep(t)]);
+  }
+  return out;
+}
+
+/** One fade wedge — dark fill above the curve + a stroked curve (port of
+ *  `ClipRenderer.drawFadeWedge`). `silent` is the silent (bottom) corner, `knee`
+ *  the top control point; the fill rises to `fillTopY`. */
+function drawFadeWedge(
+  ctx: CanvasRenderingContext2D,
+  silent: [number, number],
+  knee: [number, number],
+  interp: string,
+  fillTopY: number,
+  fillAlpha: number,
+  strokeColor: string,
+) {
+  const curve = fadeCurvePoints(silent[0], silent[1], knee[0], knee[1], interp);
+  // Fill the wedge above the curve.
+  ctx.beginPath();
+  ctx.moveTo(silent[0], silent[1]);
+  ctx.lineTo(silent[0], fillTopY);
+  ctx.lineTo(knee[0], fillTopY);
+  if (fillTopY !== knee[1]) ctx.lineTo(knee[0], knee[1]);
+  for (let i = curve.length - 2; i >= 0; i--) ctx.lineTo(curve[i][0], curve[i][1]);
+  ctx.closePath();
+  ctx.fillStyle = `rgba(0,0,0,${fillAlpha})`;
+  ctx.fill();
+  // Stroke the curve.
+  ctx.beginPath();
+  ctx.moveTo(silent[0], silent[1]);
+  for (const [px, py] of curve) ctx.lineTo(px, py);
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+/** Opacity fade wedges for visual (non-audio) clips — smoothstep curves rising
+ *  to a knee near the top of the body, dark fill above (port of the video-fade
+ *  block in ClipRenderer.swift:386-435). */
+function drawFades(ctx: CanvasRenderingContext2D, clip: Clip, rect: ClipRect, isSelected: boolean) {
   const { x, y, width, height } = rect;
-  const ppf = clip.durationFrames > 0 ? width / clip.durationFrames : 0;
+  if (clip.durationFrames <= 0) return;
+  const ppf = width / clip.durationFrames;
+  const bodyMinY = y + CLIP.labelBarHeight;
+  const bodyMaxY = y + height - 1;
+  const kneeY = bodyMinY + FADE_KNEE_TOP_INSET;
+  const alpha = isSelected ? 0.95 : 0.75;
+  const fadeColor = `rgba(255,255,255,${alpha * 0.7})`;
+  const kneeX = (offsetFrames: number) =>
+    Math.max(x + FADE_EDGE_INSET, Math.min(x + width - FADE_EDGE_INSET, x + offsetFrames * ppf));
+
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.45)";
   if (clip.fadeInFrames > 0) {
-    const fw = clip.fadeInFrames * ppf;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + fw, y);
-    ctx.lineTo(x, y + height);
-    ctx.closePath();
-    ctx.fill();
+    const lx = kneeX(Math.min(clip.fadeInFrames, clip.durationFrames));
+    drawFadeWedge(ctx, [x, bodyMaxY], [lx, kneeY], clip.fadeInInterpolation, bodyMinY, 0.6, fadeColor);
   }
   if (clip.fadeOutFrames > 0) {
-    const fw = clip.fadeOutFrames * ppf;
-    ctx.beginPath();
-    ctx.moveTo(x + width, y);
-    ctx.lineTo(x + width - fw, y);
-    ctx.lineTo(x + width, y + height);
-    ctx.closePath();
-    ctx.fill();
+    const rx = kneeX(Math.max(0, clip.durationFrames - clip.fadeOutFrames));
+    drawFadeWedge(ctx, [x + width, bodyMaxY], [rx, kneeY], clip.fadeOutInterpolation, bodyMinY, 0.6, fadeColor);
+  }
+  // Draggable knee handles (visual indicators) when selected.
+  if (isSelected) {
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 0.5;
+    const half = FADE_KNEE_SIZE / 2;
+    if (clip.fadeInFrames > 0) {
+      const lx = kneeX(Math.min(clip.fadeInFrames, clip.durationFrames));
+      ctx.fillRect(lx - half, kneeY - half, FADE_KNEE_SIZE, FADE_KNEE_SIZE);
+      ctx.strokeRect(lx - half, kneeY - half, FADE_KNEE_SIZE, FADE_KNEE_SIZE);
+    }
+    if (clip.fadeOutFrames > 0) {
+      const rx = kneeX(Math.max(0, clip.durationFrames - clip.fadeOutFrames));
+      ctx.fillRect(rx - half, kneeY - half, FADE_KNEE_SIZE, FADE_KNEE_SIZE);
+      ctx.strokeRect(rx - half, kneeY - half, FADE_KNEE_SIZE, FADE_KNEE_SIZE);
+    }
   }
   ctx.restore();
 }
