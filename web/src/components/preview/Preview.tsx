@@ -161,29 +161,18 @@ export function Preview() {
           <TimelinePlayback timeline={timeline} fps={fps} />
         ) : timelineFrameUrl ? (
           // Rust GPU composite of the timeline at the current playhead (#47).
-          // Wrapped in an aspect-fit box (same as the placeholder) so the frame
-          // always centers + fills the largest project-aspect box regardless of
-          // the PNG's intrinsic pixel size — fixes the frame rendering tiny in a
-          // corner.
-          <div
-            style={{
-              aspectRatio: `${timeline.width} / ${timeline.height}`,
-              height: "100%",
-              maxWidth: "100%",
-              maxHeight: "100%",
-              background: "var(--bg-preview-canvas)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              overflow: "hidden",
-              display: "flex",
-            }}
-          >
-            <img
-              src={timelineFrameUrl}
-              alt=""
-              draggable={false}
-              style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-            />
-          </div>
+          // The <img> aspect-fits via objectFit:contain inside the flex-centered
+          // stage — no wrapper box. A wrapper with `aspectRatio` + `height:100%`
+          // degenerates to the *container's* ratio on non-16:9 preview panes
+          // (explicit height wins over aspect-ratio; maxWidth clips the derived
+          // width but height doesn't shrink), which shrank the composite frame and
+          // pushed it into a corner with black bars around it (#125).
+          <img
+            src={timelineFrameUrl}
+            alt=""
+            draggable={false}
+            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+          />
         ) : (
           // Empty / no-frame: a framed 16:9 canvas surface placeholder.
           <div
