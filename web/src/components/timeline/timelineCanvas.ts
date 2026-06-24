@@ -77,25 +77,28 @@ export function paintTimeline(ctx: CanvasRenderingContext2D, s: PaintState) {
   // 3. Clips (skip those fully outside the visible window). A clip being dragged
   // is drawn at its live (offset) position as a ghost so it follows the cursor.
 
-  // Pre-compute link offsets: for each linked clip, find its partner's start
-  // frame and compute the signed delta (clip.startFrame − partner.startFrame).
-  // Only nonzero deltas produce a badge (port of ClipRenderer.drawOffsetBadge).
+  // Pre-compute link offsets — port of EditorViewModel+Linking.swift:95-113
+  // (linkGroupOffsets). Group clips by linkGroupId, use the min source-aligned
+  // position (startFrame − trimStartFrame) as the group reference. Only clips
+  // whose delta ≠ 0 get a badge. The reference is always the earliest clip, so
+  // offsets are always positive (upstream never shows a minus badge).
   const linkOffsetMap = new Map<string, number>();
+  const groups = new Map<string, { id: string; srcPos: number }[]>();
   for (const track of timeline.tracks) {
     for (const clip of track.clips) {
       if (!clip.linkGroupId) continue;
-      if (linkOffsetMap.has(clip.id)) continue;
-      // Find any partner with the same linkGroupId on a different track or id.
-      for (const t2 of timeline.tracks) {
-        for (const partner of t2.clips) {
-          if (partner.id === clip.id) continue;
-          if (partner.linkGroupId !== clip.linkGroupId) continue;
-          const offset = clip.startFrame - partner.startFrame;
-          linkOffsetMap.set(clip.id, offset);
-          linkOffsetMap.set(partner.id, -offset);
-          break; // stop at first partner (paired video↔audio is the common case)
-        }
-      }
+      const group = groups.get(clip.linkGroupId);
+      const entry = { id: clip.id, srcPos: clip.startFrame - clip.trimStartFrame };
+      if (group) group.push(entry);
+      else groups.set(clip.linkGroupId, [entry]);
+    }
+  }
+  for (const entries of groups.values()) {
+    if (entries.length < 2) continue;
+    const ref = Math.min(...entries.map((e) => e.srcPos));
+    for (const e of entries) {
+      const delta = e.srcPos - ref;
+      if (delta !== 0) linkOffsetMap.set(e.id, delta);
     }
   }
 

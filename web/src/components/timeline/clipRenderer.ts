@@ -418,17 +418,18 @@ function drawKeyframeMarkers(ctx: CanvasRenderingContext2D, clip: Clip, rect: Cl
 
 /**
  * Linked offset badge (ClipRenderer.swift:624-656). Red rounded-rect with white
- * "±N" frame count at the clip's top-right corner. Only drawn when the clip is
- * linked and its partner starts at a different frame.
+ * "+N" frame count at the clip's top-right corner. Only the non-earliest clips
+ * in a link group carry a badge; the earliest has no offset (upstream always
+ * shows a plus badge, never minus).
  */
 function drawOffsetBadge(
   ctx: CanvasRenderingContext2D,
   offset: number,
   rect: ClipRect,
 ) {
-  const text = offset > 0 ? `+${offset}` : `${offset}`;
+  const text = `+${offset}`;
   ctx.save();
-  ctx.font = `500 9px ${cssFontStack()}`;
+  ctx.font = `600 9px ${cssFontStack()}`;
   const metrics = ctx.measureText(text);
   const padX = 4;
   const padY = 2;
@@ -437,13 +438,16 @@ function drawOffsetBadge(
   const bx = rect.x + rect.width - TRIM.handleWidth - bw - 2;
   const by = rect.y + 2;
 
-  // Red pill background.
+  // Upstream guard: narrow clips skip the badge (ClipRenderer.swift:649).
+  if (bx <= rect.x + 6) {
+    ctx.restore(); // still need the restore of the caller's save()
+    return;
+  }
+
+  // Red pill background, no border (upstream drawOffsetBadge has no stroke).
   roundRectPath(ctx, bx, by, bw, bh, 3);
-  ctx.fillStyle = "rgba(220, 38, 38, 0.92)";
+  ctx.fillStyle = "rgb(255, 71, 71)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-  ctx.lineWidth = 0.5;
-  ctx.stroke();
 
   // White centered text.
   ctx.fillStyle = "#ffffff";
