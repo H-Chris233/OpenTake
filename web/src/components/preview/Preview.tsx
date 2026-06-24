@@ -65,6 +65,15 @@ export function Preview() {
     setMediaPlaying(false);
   }, [previewMediaId]);
 
+  // Space bar during media preview → toggle the media element.
+  const mediaToggleCount = useEditorUiStore((s) => s.mediaPreviewToggleRequest);
+  useEffect(() => {
+    if (mediaToggleCount > 0 && previewing) {
+      togglePlay();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaToggleCount]);
+
   const previewing = previewItem !== null;
   // Timeline composite preview (#47): on the Timeline tab, paint the GPU-
   // composited frame for the current playhead (replacing the black placeholder).
@@ -77,7 +86,7 @@ export function Preview() {
   // During playback `<TimelinePlayback>` plays the real media elements, so the
   // GPU composite is fetched only when PAUSED/scrubbing (accurate text/effects,
   // and no per-frame ffmpeg/PNG churn while playing).
-  const timelinePlaying = !previewing && isPlaying && timeline.tracks.length > 0;
+  const timelineHasContent = !previewing && timeline.tracks.length > 0;
   // Debounce the composited frame: each composite is a separate ffmpeg decode +
   // wgpu pass + PNG + base64, so firing one per scrubbed frame spawns a storm of
   // subprocess + GPU work that can lock up the whole machine (reported freeze).
@@ -149,6 +158,12 @@ export function Preview() {
           padding: 8,
         }}
       >
+        {/* Layer: TimelinePlayback lives here when there are tracks —
+             it stays mounted even when paused so audio/video elements
+             survive the pause→play transition (upstream VideoEngine model). */}
+        {!previewItem && timelineHasContent && (
+          <TimelinePlayback timeline={timeline} fps={fps} playing={isPlaying} />
+        )}
         {previewItem ? (
           <MediaPreview
             item={previewItem}
@@ -157,22 +172,20 @@ export function Preview() {
             onDuration={setMediaDuration}
             onPlayingChange={setMediaPlaying}
           />
-        ) : timelinePlaying ? (
-          // Real-time playback: actual <video>/<audio> elements (#53).
-          <TimelinePlayback timeline={timeline} fps={fps} />
-        ) : timelineFrameUrl ? (
+        ) : isPlaying ? null : timelineFrameUrl ? (
           // Rust GPU composite of the timeline at the current playhead (#47).
-          // The <img> aspect-fits via objectFit:contain inside the flex-centered
-          // stage — no wrapper box. A wrapper with `aspectRatio` + `height:100%`
-          // degenerates to the *container's* ratio on non-16:9 preview panes
-          // (explicit height wins over aspect-ratio; maxWidth clips the derived
-          // width but height doesn't shrink), which shrank the composite frame and
-          // pushed it into a corner with black bars around it (#125).
           <img
             src={timelineFrameUrl}
             alt=""
             draggable={false}
-            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              display: "block",
+            }}
           />
         ) : (
           // Empty / no-frame: a framed 16:9 canvas surface placeholder.
@@ -393,7 +406,6 @@ function ScrubBar({ frame, total, onSeek }: { frame: number; total: number; onSe
     >
       <div
         style={{
-          position: "relative",
           flex: 1,
           height: hover ? 4 : 3,
           background: "rgba(255,255,255,0.1)",

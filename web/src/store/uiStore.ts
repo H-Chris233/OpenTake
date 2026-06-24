@@ -113,6 +113,8 @@ interface UiState {
    *  this the stop check fires immediately and play does nothing). Mirrors
    *  upstream VideoEngine.playbackStartFrame(). */
   togglePlay: () => void;
+  mediaPreviewToggleRequest: number;
+  requestMediaPreviewToggle: () => void;
   setScrubbing: (scrubbing: boolean) => void;
 
   selectClips: (ids: Set<string>) => void;
@@ -204,6 +206,8 @@ export const useEditorUiStore = create<UiState>((set, get) => ({
     }
   },
   setScrubbing: (isScrubbing) => set({ isScrubbing }),
+  mediaPreviewToggleRequest: 0,
+  requestMediaPreviewToggle: () => set((s) => ({ mediaPreviewToggleRequest: s.mediaPreviewToggleRequest + 1 })),
 
   selectClips: (selectedClipIds) => set({ selectedClipIds }),
   clearSelection: () =>

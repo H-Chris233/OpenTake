@@ -110,7 +110,11 @@ export function useKeyboardShortcuts() {
       switch (e.code) {
         case "Space":
           e.preventDefault();
-          ui.togglePlay(); // rewinds from the parked end frame on replay
+          if (ui.previewMediaId) {
+            ui.requestMediaPreviewToggle();
+          } else {
+            ui.togglePlay(); // rewinds from the parked end frame on replay
+          }
           return;
         case "ArrowLeft":
           e.preventDefault();
