@@ -432,7 +432,7 @@ export function TimelineContainer() {
         let deltaFrames = rawFrame - d.grabFrame;
         // Snap: probe the moved clip's edges.
         const excluded = new Set(d.companions);
-        const targets = collectTargets(timeline, excluded, activeFrame);
+        const targets = collectTargets(timeline, excluded, activeFrame, true);
         const movedStart = d.hit.clip.startFrame + deltaFrames;
         const movedEnd = movedStart + d.hit.clip.durationFrames;
         const snapStart = findSnap(movedStart, targets, zoomScale, null);
@@ -461,7 +461,7 @@ export function TimelineContainer() {
         const rawFrame = frameAt(docX, zoomScale);
         const edge = d.kind === "trimLeft" ? d.hit.clip.startFrame : d.hit.clip.startFrame + d.hit.clip.durationFrames;
         let deltaFrames = rawFrame - edge;
-        const targets = collectTargets(timeline, new Set([d.hit.clip.id]), activeFrame);
+        const targets = collectTargets(timeline, new Set([d.hit.clip.id]), activeFrame, true);
         const snap = findSnap(rawFrame, targets, zoomScale, null);
         if (snap) {
           deltaFrames = snap.frame - edge;
